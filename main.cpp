@@ -37,6 +37,13 @@ enum DnsClass {
     CH = 3,
     HS = 4
 };
+struct hlp{
+    int size;
+    unsigned char* ptr;
+    string name;
+};
+
+
 
 void selectRecordType(uint16_t qtype) {
     switch (qtype) {
@@ -83,6 +90,172 @@ void selectClass(uint16_t qclass) {
     }
 }
 
+hlp getDomain(unsigned char* Ptr){
+    //unsigned char* my_ptr = Ptr;
+    hlp a;
+    a.size = 0;
+    a.name;
+    while (*Ptr != 0) {
+        a.size += *Ptr + 1; // Додаємо розмір мітки плюс байт довжини
+        int labelLength = *Ptr;
+        if (labelLength > 63) {
+            cerr << "ERR: Invalid label length in NAME" << endl;
+            EXIT_FAILURE;
+        }
+        Ptr++;
+        for (int j = 0; j < labelLength; ++j) {
+            //cout << "Adress: " << *Ptr;
+            //cout << "NAME SYMBOLS: " << *Ptr;
+            a.name += *Ptr;
+            Ptr++;
+        }
+        a.name += '.';
+    }
+
+    Ptr++; // Пропускаємо нульовий байт, що позначає кінець QNAME
+    a.ptr = Ptr;
+    a.size+=1;
+   // cout << "Size " << a.size << endl;
+//    cout  << "DOMAIN NAME: " << a.name << " \n";
+    return a;
+}
+
+
+unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* end_hdr) {
+    unsigned char* ptr = Ptr; // Початковий вказівник на DNS Answers
+
+    for (int i = 0; i < Count; ++i) {
+        std::string name;
+        hlp b;
+        // Обробка імені з урахуванням компресії
+        if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
+
+            uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
+            unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
+            b = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
+            name = b.name;
+            ptr += 2; // Пропускаємо 2 байти компресії
+        } else {
+             b = getDomain(ptr); // Обробляємо звичайне ім'я
+            if (b.ptr == nullptr) {
+                std::cerr << "Error processing domain name in Answer section" << std::endl;
+                return nullptr;
+            }
+            name = b.name;
+            ptr = b.ptr; // Оновлюємо ptr після обробки імені
+        }
+
+        // Читаємо TYPE (2 байти)
+        uint16_t type = ntohs(*(uint16_t*)ptr);
+        ptr += 2;
+
+        // Читаємо CLASS (2 байти)
+        uint16_t classCode = ntohs(*(uint16_t*)ptr);
+        ptr += 2;
+
+        // Читаємо TTL (4 байти)
+        uint32_t ttl = ntohl(*(uint32_t*)ptr);
+        ptr += 4;
+
+        // Читаємо RDLENGTH (2 байти)
+        uint16_t rdlength = ntohs(*(uint16_t*)ptr);
+        ptr += 2;
+
+        // Пропускаємо RDATA (rdlength байтів)
+
+//        hlp rdata ;
+//        hlp rdata;
+//        if(type == 1) {
+//            for (int j = 0; j < rdlength; ++j) {
+//                rdata.name += std::to_string(ptr[j]);
+//                if (j < rdlength - 1) {
+//                    rdata.name += ".";
+//                }
+//            }
+//            ptr += rdlength;
+//        }
+            hlp rdata;
+            if(type == 5){// Перевірка на стиснення
+
+
+                if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
+
+                    uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
+                    unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
+                    rdata = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
+                    //name = b.name;
+                    ptr += 2; // Пропускаємо 2 байти компресії
+                } else {
+                    rdata = getDomain(ptr); // Обробляємо звичайне ім'я
+                    if (rdata.ptr == nullptr) {
+                        std::cerr << "Error processing domain name in Answer section" << std::endl;
+                        return nullptr;
+                    }
+                    //name = b.name;
+                    ptr += rdlength; // Оновлюємо ptr після обробки імені
+                }
+            }
+            else {
+                ptr += rdlength;
+            }
+
+//        else if(type == 6){
+//        }
+//        else if(type == 28){
+//        }sa   1
+//        else if(type == 33){
+//        }
+
+
+
+        // Виводимо інформацію про запис
+        std::cout << "\n[Answers Section]\n";
+        std::cout << "Answer NAME: " << name << " " << ttl << " ";
+        selectClass(classCode);
+        std::cout << " ";
+        selectRecordType(type);
+        //std::cout << endl;
+        //std::cout << "\nSize: " << qsize << " байтів" << std::endl;
+        cout << " RDATA " << rdata.name << endl;
+    }
+
+    return ptr; // Повертаємо вказівник на кінець оброблених записів
+}
+
+
+unsigned char* processDNSQuestions(int questionCount, unsigned char* startPtr) {
+    unsigned char* ptr = startPtr; // Початковий вказівник на DNS Questions
+
+    // Обробляємо кожне питання
+    for (int i = 0; i < questionCount; ++i) {
+        hlp b = getDomain(ptr);
+        //std::string qname = "";z
+        int qsize = b.size;
+
+        // Парсимо QNAME
+
+        qsize += 4; // Додаємо 5 байтів для QTYPE і QCLASS
+        ptr = b.ptr;
+        // Парсимо QTYPE і QCLASS
+        uint16_t qtype = ntohs(*(uint16_t*)ptr);
+        ptr += 2;
+        uint16_t qclass = ntohs(*(uint16_t*)ptr);
+        ptr += 2;
+
+        // Виводимо інформацію про питання
+        std::cout << "\n[Question Section]\n";
+        std::cout << "QNAME: " << b.name << " ";
+        selectClass(qclass);
+        std::cout << " ";
+        selectRecordType(qtype);
+        std::cout << "\nSize: " << qsize << " байтів" << std::endl;
+    }
+
+    // Повертаємо вказівник на кінець розділу DNS Questions
+    return ptr;
+}
+
+
 void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_char* packet) {
     char timeString[64];
     std::time_t rawtime = pkthdr->ts.tv_sec;
@@ -120,33 +293,49 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
     uint16_t authCount = ntohs(dnsHeader->auth_count);
     uint16_t addCount = ntohs(dnsHeader->add_count);
 
+    unsigned char* ptr_end_hdr = (unsigned char*)dnsHeader + sizeof(dnshdr);
+    unsigned char* ptr_Header = (unsigned char*)dnsHeader;
+    unsigned char* ptr = ptr_end_hdr;
     int qsize = 0;
     if (qCount != 0) {
-        unsigned char* ptr = (unsigned char*)dnsHeader + sizeof(dnshdr);
 
-        std::string qname = "";
-        while (*ptr != 0) {
-            qsize += *ptr + 1;
-            int labelLength = *ptr;
-            ptr++;
-            for (int i = 0; i < labelLength; ++i) {
-                qname += *ptr;
-                ptr++;
-            }
-            qname += '.';
-        }
-        qsize += 5;
-        ptr++;
-
-        uint16_t qtype = ntohs(*(uint16_t*)ptr);
-        ptr += 2;
-        uint16_t qclass = ntohs(*(uint16_t*)ptr);
-        ptr += 2;
+        ptr = processDNSQuestions(qCount,ptr_end_hdr);
+//        std::string qname = "";
+//        while (*ptr != 0) {
+//            qsize += *ptr + 1;
+//            int labelLength = *ptr;
+//            ptr++;
+//            for (int i = 0; i < labelLength; ++i) {
+//                qname += *ptr;
+//                ptr++;
+//            }
+//            qname += '.';
+//        }
+//        qsize += 5;
+//        ptr++;
+//
+//        uint16_t qtype = ntohs(*(uint16_t*)ptr);
+//        ptr += 2;
+//        uint16_t qclass = ntohs(*(uint16_t*)ptr);
+//        ptr += 2;
+//        cout << "\n[Question Section]\n";
+//        cout << "QNAME is " << qname << " ";
+//        selectClass(qclass);
+//        cout << " ";
+//        selectRecordType(qtype);
+//        cout << endl;
+//        cout << "Size " << qsize << endl;
     }
 
     if (ansCount != 0) {
-        unsigned char* ptr = (unsigned char*)dnsHeader + sizeof(dnshdr) + qsize;
+        ptr = processDNSAnswer(ansCount,ptr, ptr_Header);
     }
+//    if(authCount != 0){
+//        ptr = processDNSAnswer(ansCount,ptr, ptr_Header);
+//    }
+//    if(addCount != 0){
+//        ptr = processDNSAnswer(ansCount,ptr, ptr_Header);
+//    }
     if (full_mode) {
         cout << "Timestamp: " << timeString << endl;
         cout << "SrcIP: " << srcIP << endl;
