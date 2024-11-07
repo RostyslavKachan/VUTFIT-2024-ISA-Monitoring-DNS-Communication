@@ -16,7 +16,7 @@
 using namespace std;
 
 bool full_mode = false;
-std::set<std::string> uniqueDomains;
+
 struct dnshdr {
     uint16_t id;
     uint16_t flags;
@@ -55,20 +55,33 @@ struct hlp{
     string name;
 };
 
+set<string> uniqueDomains;
+set<string> DomainToIP;
 
-void addDomain(std::string& domain) {
+void addDomainToIP(string domainName, string ip){
+    domainName.pop_back();
+    domainName = domainName + " " + ip;
+    DomainToIP.insert(domainName);
+}
+void addDomain(std::string domain) {
     domain.pop_back();
     uniqueDomains.insert(domain);
 }
-void saveDomainsToFile(const std::string& filename) {
+void saveDomainsIPToFile(const std::string& filename, bool flag) {
     std::ofstream outFile(filename);
     if (!outFile) {
         std::cerr << "Не вдалося відкрити файл для запису: " << filename << std::endl;
         return;
     }
-
-    for (const auto& domain : uniqueDomains) {
-        outFile << domain << std::endl;
+    if(flag) {
+        for (const auto &domain: uniqueDomains) {
+            outFile << domain << std::endl;
+        }
+    }
+    else{
+        for (const auto &domainToIP: DomainToIP) {
+            outFile << domainToIP << std::endl;
+        }
     }
     outFile.close();
 
@@ -309,6 +322,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
                 }
             }
                 cout << rdata.name << endl;
+                addDomainToIP(domain.name, rdata.name);
                 Ptr += rdlength;
             }
             else if(type == 2){
@@ -383,6 +397,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
                 // Пропускаємо RDATA після обробки
                 Ptr += 16;
                 std::cout << ipv6Address << std::endl;
+                addDomainToIP(domain.name, ipv6Address);
             }
             else if(type == 33){
                 // Зчитуємо поле Priority (2 байти)
@@ -754,8 +769,12 @@ int main(int argc, char* argv[]) {
         captureFromFile(pcapfile);
     }
     if(!domainsfile.empty()) {
-        saveDomainsToFile(domainsfile);
+        saveDomainsIPToFile(domainsfile,true);
     }
+    if(!translationsfile.empty()){
+        saveDomainsIPToFile(translationsfile, false);
+    }
+
     return 0;
 }
 
