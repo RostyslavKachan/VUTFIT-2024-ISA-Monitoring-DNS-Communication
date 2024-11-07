@@ -89,15 +89,69 @@ void selectClass(uint16_t qclass) {
             break;
     }
 }
-
+//hlp getDomainOleg(unsigned char* startPtr, unsigned char* Ptr) {
+//    hlp result;
+//    result.name = "";
+//    result.size = 0;
+//    bool isCompressed = false;
+//    int safetyCounter = 0;  // Захист від нескінченних циклів
+//
+//    while (*Ptr != 0) {
+//        if (safetyCounter++ > 100) {  // Захист від можливих нескінченних циклів
+//            std::cerr << "ERR: Possible infinite loop or corrupted packet" << std::endl;
+//            result.ptr = nullptr;
+//            return result;
+//        }
+//
+//        uint8_t labelLength = *Ptr;
+//
+//        // Перевірка на стиснення (два старші біти 11)
+//        if ((labelLength & 0xC0) == 0xC0) {
+//            // Отримуємо 14-бітове значення зміщення для компресії
+//            uint16_t offset = ((labelLength & 0x3F) << 8) | *(Ptr + 1);
+//            Ptr = startPtr + offset;  // Переходимо за новим зміщенням
+//
+//            if (!isCompressed) {
+//                // Зберігаємо місце після стисненого вказівника для повернення ptr
+//                result.ptr = Ptr + 2;
+//            }
+//            isCompressed = true;
+//            continue;
+//        }
+//
+//        // Якщо це звичайна мітка, обробляємо її
+//        result.size += labelLength + 1;  // Додаємо розмір мітки плюс один для довжини
+//        Ptr++;  // Переміщаємося вперед після байту довжини
+//        for (int j = 0; j < labelLength; ++j) {
+//            result.name += *Ptr;  // Додаємо символи мітки до імені
+//            Ptr++;
+//        }
+//        result.name += '.';  // Додаємо крапку після мітки
+//    }
+//
+//    Ptr++; // Пропускаємо нульовий байт, що позначає кінець QNAME
+//
+//    // Видаляємо зайву крапку, якщо ім'я не порожнє
+//    if (!result.name.empty() && result.name.back() == '.') {
+//        result.name.pop_back();
+//    }
+//
+//    // Повертаємо запам'ятоване значення ptr, якщо було стиснення
+//    result.ptr = isCompressed ? result.ptr : Ptr;
+//    return result;
+//}
 hlp getDomain(unsigned char* Ptr){
     //unsigned char* my_ptr = Ptr;
     hlp a;
     a.size = 0;
     a.name;
     while (*Ptr != 0) {
-        a.size += *Ptr + 1; // Додаємо розмір мітки плюс байт довжини
+
+        a.size += *Ptr + 1;
+        // Додаємо розмір мітки плюс байт довжини
         int labelLength = *Ptr;
+
+        cout << "Label Length: " << labelLength << endl;
         if (labelLength > 63) {
             cerr << "ERR: Invalid label length in NAME" << endl;
             EXIT_FAILURE;
@@ -120,46 +174,139 @@ hlp getDomain(unsigned char* Ptr){
     return a;
 }
 
+//hlp getDomainSecond(unsigned char* Ptr, unsigned char* startHeader){
+//    //unsigned char* my_ptr = Ptr;
+//    hlp a;
+//    a.size = 0;
+//    a.name;
+//    while (*Ptr != 0) {
+//
+//        a.size += *Ptr + 1;
+//        // Додаємо розмір мітки плюс байт довжини
+//        int labelLength = *Ptr;
+//
+//        cout << "Label Length: " << labelLength << endl;
+//        if (labelLength > 63) {
+//            cerr << "ERR: Invalid label length in NAME" << endl;
+//            EXIT_FAILURE;
+//        }
+//        Ptr++;
+//        for (int j = 0; j < labelLength; ++j) {
+//            //cout << "Adress: " << *Ptr;
+//            //cout << "NAME SYMBOLS: " << *Ptr;
+//            a.name += *Ptr;
+//            Ptr++;
+//        }
+//        a.name += '.';
+//    }
+//
+//    Ptr++; // Пропускаємо нульовий байт, що позначає кінець QNAME
+//    a.ptr = Ptr;
+//    a.size+=1;
+//    // cout << "Size " << a.size << endl;
+////    cout  << "DOMAIN NAME: " << a.name << " \n";
+//    return a;
+//}
+hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
+    hlp a;
+    a.size = 0;
+    a.name = "";
 
-unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* end_hdr) {
-    unsigned char* ptr = Ptr; // Початковий вказівник на DNS Answers
+    unsigned char* originalPtr = Ptr; // Зберігаємо початковий вказівник для розрахунку розміру
+    bool jumped = false;               // Відстежуємо, чи використовували вказівник
+    int safetyCounter = 0;             // Лічильник безпеки для запобігання нескінченному циклу
 
-    for (int i = 0; i < Count; ++i) {
-        std::string name;
-        hlp b;
-        // Обробка імені з урахуванням компресії
-        if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
-
-            uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
-            unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
-            b = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
-            name = b.name;
-            ptr += 2; // Пропускаємо 2 байти компресії
-        } else {
-             b = getDomain(ptr); // Обробляємо звичайне ім'я
-            if (b.ptr == nullptr) {
-                std::cerr << "Error processing domain name in Answer section" << std::endl;
-                return nullptr;
-            }
-            name = b.name;
-            ptr = b.ptr; // Оновлюємо ptr після обробки імені
+    while (*Ptr != 0) {
+        if (safetyCounter++ > 100) {
+            throw std::runtime_error("Помилка: можливий некоректний пакет або нескінченний цикл");
         }
 
+        if ((*Ptr & 0xC0) == 0xC0) { // Перевірка на компресію (два старші біти встановлені в 1)
+            if (!jumped) {
+                a.size += 2; // Додаємо 2 байти для компресованої адреси
+            }
+            int offset = ((*Ptr & 0x3F) << 8) | *(Ptr + 1); // Отримуємо зміщення
+            Ptr = startPtr + offset; // Переходимо за вказаним зміщенням
+            jumped = true; // Позначаємо, що було стиснення
+        } else {
+            int labelLength = *Ptr; // Довжина мітки
+            if (labelLength > 63) {
+                throw std::runtime_error("ERR: Invalid label length in NAME");
+            }
+
+            Ptr++; // Переходимо до символів мітки
+            a.size += labelLength + 1; // Додаємо розмір мітки та байт довжини
+
+            // Додаємо символи мітки до імені
+            for (int j = 0; j < labelLength; ++j) {
+                a.name += *Ptr;
+                Ptr++;
+            }
+            a.name += '.'; // Додаємо крапку після мітки
+        }
+    }
+
+    if (!jumped) {
+        Ptr++; // Пропускаємо нульовий байт, якщо не було стрибка
+        a.size += 1; // Додаємо нульовий байт до розміру
+    }
+
+//    // Видаляємо останню зайву крапку
+//    if (!a.name.empty() && a.name.back() == '.') {
+//        a.name.pop_back();
+//    }
+
+    // Зберігаємо вказівник на наступну позицію після доменного імені
+
+    a.ptr = jumped ? originalPtr + 2 : Ptr;
+
+    std::cout << "Size: " << a.size << std::endl;
+    return a;
+}
+
+
+
+
+unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* end_hdr) {
+    // Початковий вказівник на DNS Answers
+
+    for (int i = 0; i < Count; ++i) {
+        //std::string name;
+        hlp b;
+//        // Обробка імені з урахуванням компресії
+//        if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
+//
+//            uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
+//            unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
+//            b = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
+//            name = b.name;
+//            ptr += 2; // Пропускаємо 2 байти компресії
+//        } else {
+//             b = getDomain(ptr); // Обробляємо звичайне ім'я
+//            if (b.ptr == nullptr) {
+//                std::cerr << "Error processing domain name in Answer section" << std::endl;
+//                return nullptr;
+//            }
+//            name = b.name;
+//            ptr = b.ptr; // Оновлюємо ptr після обробки імені
+//        }
+        b = getDomainSecond(end_hdr,Ptr);
+        Ptr = b.ptr;
         // Читаємо TYPE (2 байти)
-        uint16_t type = ntohs(*(uint16_t*)ptr);
-        ptr += 2;
+        uint16_t type = ntohs(*(uint16_t*)Ptr);
+        Ptr += 2;
 
         // Читаємо CLASS (2 байти)
-        uint16_t classCode = ntohs(*(uint16_t*)ptr);
-        ptr += 2;
+        uint16_t classCode = ntohs(*(uint16_t*)Ptr);
+        Ptr += 2;
 
         // Читаємо TTL (4 байти)
-        uint32_t ttl = ntohl(*(uint32_t*)ptr);
-        ptr += 4;
+        uint32_t ttl = ntohl(*(uint32_t*)Ptr);
+        Ptr += 4;
 
         // Читаємо RDLENGTH (2 байти)
-        uint16_t rdlength = ntohs(*(uint16_t*)ptr);
-        ptr += 2;
+        uint16_t rdlength = ntohs(*(uint16_t*)Ptr);
+        Ptr += 2;
 
         // Пропускаємо RDATA (rdlength байтів)
 
@@ -175,42 +322,126 @@ unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* en
 //            ptr += rdlength;
 //        }
             hlp rdata;
-            if(type == 5){// Перевірка на стиснення
-
-
-                if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
-
-                    uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
-                    unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
-                    rdata = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
-                    //name = b.name;
-                    ptr += 2; // Пропускаємо 2 байти компресії
-                } else {
-                    rdata = getDomain(ptr); // Обробляємо звичайне ім'я
-                    if (rdata.ptr == nullptr) {
-                        std::cerr << "Error processing domain name in Answer section" << std::endl;
-                        return nullptr;
-                    }
-                    //name = b.name;
-                    ptr += rdlength; // Оновлюємо ptr після обробки імені
+            cout << "TYPE: " << type << endl;
+            if(type == 1) {
+            for (int j = 0; j < rdlength; ++j) {
+                rdata.name += std::to_string(Ptr[j]);
+                if (j < rdlength - 1) {
+                    rdata.name += ".";
                 }
             }
-            else {
-                ptr += rdlength;
+                Ptr += rdlength;
+            }
+            else if(type == 2){
+                rdata = getDomainSecond(end_hdr,Ptr);
+                Ptr+=rdlength;
+            }
+            else if(type == 5){// Перевірка на стиснення
+
+
+//                if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
+//
+//                    uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
+//                    unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
+//                    rdata = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
+//                    //name = b.name;
+//                    ptr += 2; // Пропускаємо 2 байти компресії
+//                } else {
+//                    rdata = getDomain(ptr); // Обробляємо звичайне ім'я
+//                    if (rdata.ptr == nullptr) {
+//                        std::cerr << "Error processing domain name in Answer section" << std::endl;
+//                        return nullptr;
+//                    }
+//                    //name = b.name;
+//                    ptr += rdlength; // Оновлюємо ptr після обробки імені
+//                }
+                    rdata = getDomainSecond(end_hdr,Ptr);
+                    Ptr+=rdlength;
+
+            }
+            else if(type == 6){
+                hlp mnameResult = getDomainSecond(end_hdr, Ptr); // MNAME
+                std::string mname = mnameResult.name;
+                Ptr = mnameResult.ptr;
+
+                hlp rnameResult = getDomainSecond(end_hdr, Ptr); // RNAME
+                std::string rname = rnameResult.name;
+                Ptr = rnameResult.ptr;
+
+                // Читаємо числові значення
+                uint32_t serial = ntohl(*(uint32_t*)Ptr);
+                Ptr += 4;
+
+                uint32_t refresh = ntohl(*(uint32_t*)Ptr);
+                Ptr += 4;
+
+                uint32_t retry = ntohl(*(uint32_t*)Ptr);
+                Ptr += 4;
+
+                uint32_t expire = ntohl(*(uint32_t*)Ptr);
+                Ptr += 4;
+
+                uint32_t minimum = ntohl(*(uint32_t*)Ptr);
+                Ptr += 4;
+                std::cout << "SOA Record: MNAME=" << mname << ", RNAME=" << rname
+                          << ", Serial=" << serial << ", Refresh=" << refresh
+                          << ", Retry=" << retry << ", Expire=" << expire
+                          << ", Minimum TTL=" << minimum << std::endl;
+            }
+            else if(type == 15){
+                uint16_t preference = ntohs(*(uint16_t*)Ptr);
+                Ptr += 2;
+
+                // Викликаємо getDomain для розпаковки Exchange як доменного імені
+                hlp exchangeResult = getDomainSecond(end_hdr, Ptr);
+                std::string exchange = exchangeResult.name;
+                Ptr += rdlength - 2;
+                std::cout << "MX Record: Preference=" << preference << ", Exchange=" << exchange << std::endl;
+
+            }
+            else if(type == 28){
+                std::string ipv6Address;
+
+                // Зчитуємо 16 байт IPv6 адреси
+                char buffer[INET6_ADDRSTRLEN];
+                inet_ntop(AF_INET6, Ptr, buffer, INET6_ADDRSTRLEN);
+                ipv6Address = buffer;
+
+                // Пропускаємо RDATA після обробки
+                Ptr += 16;
+                std::cout << "AAAA Record: IPv6 Address=" << ipv6Address << std::endl;
+            }
+            else if(type == 33){
+                // Зчитуємо поле Priority (2 байти)
+                uint16_t priority = ntohs(*(uint16_t*)Ptr);
+                Ptr += 2;
+
+                // Зчитуємо поле Weight (2 байти)
+                uint16_t weight = ntohs(*(uint16_t*)Ptr);
+                Ptr += 2;
+
+                // Зчитуємо поле Port (2 байти)
+                uint16_t port = ntohs(*(uint16_t*)Ptr);
+                Ptr += 2;
+
+                // Викликаємо getDomain для розпаковки Target як доменного імені
+                hlp targetResult = getDomainSecond(end_hdr, Ptr);
+                std::string target = targetResult.name;
+                Ptr +=rdlength-6 ;
+                std::cout << "SRV Record: Priority=" << priority << ", Weight=" << weight
+                          << ", Port=" << port << ", Target=" << target << std::endl;
+            }
+            else{
+                Ptr+=rdlength;
             }
 
-//        else if(type == 6){
-//        }
-//        else if(type == 28){
-//        }sa   1
-//        else if(type == 33){
-//        }
+
 
 
 
         // Виводимо інформацію про запис
         std::cout << "\n[Answers Section]\n";
-        std::cout << "Answer NAME: " << name << " " << ttl << " ";
+        std::cout << "Answer NAME: " << b.name << " " << ttl << " ";
         selectClass(classCode);
         std::cout << " ";
         selectRecordType(type);
@@ -219,7 +450,7 @@ unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* en
         cout << " RDATA " << rdata.name << endl;
     }
 
-    return ptr; // Повертаємо вказівник на кінець оброблених записів
+    return Ptr; // Повертаємо вказівник на кінець оброблених записів
 }
 
 
@@ -411,6 +642,7 @@ void captureFromFile(const std::string& pcapfile) {
 }
 
 int main(int argc, char* argv[]) {
+
     int opt;
     std::cout << "Hello, World!" << std::endl;
     bool interface_provided = false;
