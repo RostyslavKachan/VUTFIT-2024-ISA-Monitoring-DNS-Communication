@@ -9,10 +9,14 @@
 #include <netinet/udp.h>  // For UDP header
 #include <arpa/inet.h>    // For inet_ntoa
 #include <ctime>          // For time formatting
+#include <fstream>
+#include <set>
+
+
 using namespace std;
 
 bool full_mode = false;
-
+std::set<std::string> uniqueDomains;
 struct dnshdr {
     uint16_t id;
     uint16_t flags;
@@ -52,7 +56,23 @@ struct hlp{
 };
 
 
+void addDomain(std::string& domain) {
+    domain.pop_back();
+    uniqueDomains.insert(domain);
+}
+void saveDomainsToFile(const std::string& filename) {
+    std::ofstream outFile(filename);
+    if (!outFile) {
+        std::cerr << "Не вдалося відкрити файл для запису: " << filename << std::endl;
+        return;
+    }
 
+    for (const auto& domain : uniqueDomains) {
+        outFile << domain << std::endl;
+    }
+    outFile.close();
+
+}
 void selectRecordType(uint16_t qtype) {
     switch (qtype) {
         case A:
@@ -124,7 +144,7 @@ hlp getDomain(unsigned char* Ptr){
         }
         a.name += '.';
     }
-
+    //addDomain(a.name);
     Ptr++; // Пропускаємо нульовий байт, що позначає кінець QNAME
     a.ptr = Ptr;
     a.size+=1;
@@ -181,6 +201,7 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
             a.name += '.'; // Додаємо крапку після мітки
         }
     }
+    //addDomain(a.name);
     if(compression_on_start){
         a.ptr = originalPtr + 2;
         return a;
@@ -248,15 +269,23 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
         // Читаємо TTL (4 байти)
         uint32_t ttl = ntohl(*(uint32_t*)Ptr);
         Ptr += 4;
-        
+
+
+
         // Читаємо RDLENGTH (2 байти)
         uint16_t rdlength = ntohs(*(uint16_t*)Ptr);
         Ptr += 2;
+        if(type != A && type != NS && type != CNAME && type != SOA && type != MX && type != AAAA && type != SRV){
+            cout << "UNKNOWN type of record" << endl;
+            Ptr+=rdlength;
+            return Ptr;
+        }
         cout << domain.name << " " <<std::dec <<  ttl << " " ;
         selectClass(classCode);
         cout << " ";
         selectRecordType(type);
         cout << " ";
+        addDomain(domain.name);
         // Пропускаємо RDATA (rdlength байтів)
 
 //        hlp rdata ;
@@ -286,6 +315,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
                 rdata = getDomainSecond(end_hdr,Ptr);
                 //Ptr+=rdlength;
                 cout << rdata.name << endl;
+                addDomain(rdata.name);
                 Ptr = rdata.ptr;
             }
             else if(type == 5){// Перевірка на стиснення
@@ -293,6 +323,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
                 rdata = getDomainSecond(end_hdr,Ptr);
                 //Ptr+=rdlength;
                 cout << rdata.name << endl;
+                addDomain(rdata.name);
                 Ptr = rdata.ptr;
             }
             else if(type == 6){
@@ -300,8 +331,10 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
 
                 Ptr = mnameResult.ptr;
                 cout << mnameResult.name << " " << endl;
+                addDomain(mnameResult.name);
                 hlp rnameResult = getDomainSecond(end_hdr, Ptr); // RNAME
                 cout << rnameResult.name << " " << endl;
+                addDomain(rnameResult.name);
                 Ptr = rnameResult.ptr;
                 //Ptr =  Ptr + (rdlength-20-mnameResult.size);
 
@@ -333,6 +366,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
                 // Викликаємо getDomain для розпаковки Exchange як доменного імені
                 hlp exchangeResult = getDomainSecond(end_hdr, Ptr);
                 cout <<std::dec << preference << " " <<  exchangeResult.name << endl;
+                addDomain(exchangeResult.name);
                 Ptr = exchangeResult.ptr;
 //                //Ptr += rdlength - 2;
 //                std::cout << "MX Record: Preference=" << preference << ", Exchange=" << exchange << std::endl;
@@ -366,14 +400,15 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
                 // Викликаємо getDomain для розпаковки Target як доменного імені
                 hlp targetResult = getDomainSecond(end_hdr, Ptr);
                 cout <<std::dec <<  priority << " " << std::dec <<  weight << " " <<std::dec << port << " " << targetResult.name << " " << endl;
+                addDomain(targetResult.name);
                 Ptr = targetResult.ptr ;
 //                std::cout << "SRV Record: Priority=" << priority << ", Weight=" << weight
 //                          << ", Port=" << port << ", Target=" << target << std::endl;
             }
-            else{
-                cout << "UNKNOWN RDATA\n";
-                Ptr+=rdlength;
-            }
+//            else{
+//                cout << "UNKNOWN RDATA\n";
+//                Ptr+=rdlength;
+//            }
             
         
 
@@ -409,7 +444,7 @@ unsigned char* processDNSQuestions(int questionCount, unsigned char* startPtr) {
         ptr += 2;
         uint16_t qclass = ntohs(*(uint16_t*)ptr);
         ptr += 2;
-
+        addDomain(domain.name);
         // Виводимо інформацію про питання
         std::cout << "\n[Question Section]\n";
         std::cout << "QNAME: " << domain.name << " ";
@@ -717,6 +752,9 @@ int main(int argc, char* argv[]) {
         captureFromInterface(interface);
     } else if (!pcapfile.empty()) {
         captureFromFile(pcapfile);
+    }
+    if(!domainsfile.empty()) {
+        saveDomainsToFile(domainsfile);
     }
     return 0;
 }
