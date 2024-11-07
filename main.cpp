@@ -174,47 +174,19 @@ hlp getDomain(unsigned char* Ptr){
     return a;
 }
 
-//hlp getDomainSecond(unsigned char* Ptr, unsigned char* startHeader){
-//    //unsigned char* my_ptr = Ptr;
-//    hlp a;
-//    a.size = 0;
-//    a.name;
-//    while (*Ptr != 0) {
-//
-//        a.size += *Ptr + 1;
-//        // Додаємо розмір мітки плюс байт довжини
-//        int labelLength = *Ptr;
-//
-//        cout << "Label Length: " << labelLength << endl;
-//        if (labelLength > 63) {
-//            cerr << "ERR: Invalid label length in NAME" << endl;
-//            EXIT_FAILURE;
-//        }
-//        Ptr++;
-//        for (int j = 0; j < labelLength; ++j) {
-//            //cout << "Adress: " << *Ptr;
-//            //cout << "NAME SYMBOLS: " << *Ptr;
-//            a.name += *Ptr;
-//            Ptr++;
-//        }
-//        a.name += '.';
-//    }
-//
-//    Ptr++; // Пропускаємо нульовий байт, що позначає кінець QNAME
-//    a.ptr = Ptr;
-//    a.size+=1;
-//    // cout << "Size " << a.size << endl;
-////    cout  << "DOMAIN NAME: " << a.name << " \n";
-//    return a;
-//}
+
 hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
     hlp a;
     a.size = 0;
     a.name = "";
 
-    unsigned char* originalPtr = Ptr; // Зберігаємо початковий вказівник для розрахунку розміру
-    bool jumped = false;               // Відстежуємо, чи використовували вказівник
-    int safetyCounter = 0;             // Лічильник безпеки для запобігання нескінченному циклу
+    hlp additional_struct_to_identif_comp;
+    additional_struct_to_identif_comp.size  = 0;
+    additional_struct_to_identif_comp.name  = "";
+    unsigned char* originalPtr = Ptr;
+    bool jumped = false;
+    bool compression_on_start = false;
+    int safetyCounter = 0;
 
     while (*Ptr != 0) {
         if (safetyCounter++ > 100) {
@@ -222,9 +194,14 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
         }
 
         if ((*Ptr & 0xC0) == 0xC0) { // Перевірка на компресію (два старші біти встановлені в 1)
+            if(a.size == 0){
+                compression_on_start = true;
+            }
+            additional_struct_to_identif_comp.size = a.size;
             if (!jumped) {
                 a.size += 2; // Додаємо 2 байти для компресованої адреси
             }
+
             int offset = ((*Ptr & 0x3F) << 8) | *(Ptr + 1); // Отримуємо зміщення
             Ptr = startPtr + offset; // Переходимо за вказаним зміщенням
             jumped = true; // Позначаємо, що було стиснення
@@ -245,24 +222,24 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
             a.name += '.'; // Додаємо крапку після мітки
         }
     }
-
+    if(compression_on_start){
+        a.ptr = originalPtr + 2;
+        return a;
+    }
     if (!jumped) {
         Ptr++; // Пропускаємо нульовий байт, якщо не було стрибка
         a.size += 1; // Додаємо нульовий байт до розміру
     }
 
-//    // Видаляємо останню зайву крапку
-//    if (!a.name.empty() && a.name.back() == '.') {
-//        a.name.pop_back();
-//    }
 
     // Зберігаємо вказівник на наступну позицію після доменного імені
-
-    a.ptr = jumped ? originalPtr + 2 : Ptr;
+    // Якщо було стиснення, повертаємося до оригінальної позиції + 2 байти (компресійний вказівник)
+    a.ptr = jumped ? originalPtr + additional_struct_to_identif_comp.size + 2 : Ptr;
 
     std::cout << "Size: " << a.size << std::endl;
     return a;
 }
+
 
 
 
@@ -338,26 +315,9 @@ unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* en
             }
             else if(type == 5){// Перевірка на стиснення
 
-
-//                if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
-//
-//                    uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
-//                    unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
-//                    rdata = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
-//                    //name = b.name;
-//                    ptr += 2; // Пропускаємо 2 байти компресії
-//                } else {
-//                    rdata = getDomain(ptr); // Обробляємо звичайне ім'я
-//                    if (rdata.ptr == nullptr) {
-//                        std::cerr << "Error processing domain name in Answer section" << std::endl;
-//                        return nullptr;
-//                    }
-//                    //name = b.name;
-//                    ptr += rdlength; // Оновлюємо ptr після обробки імені
-//                }
                     rdata = getDomainSecond(end_hdr,Ptr);
-                    Ptr+=rdlength;
-
+                    //Ptr+=rdlength;
+                    Ptr = rdata.ptr;
             }
             else if(type == 6){
                 hlp mnameResult = getDomainSecond(end_hdr, Ptr); // MNAME
@@ -367,6 +327,7 @@ unsigned char* processDNSAnswer(int Count, unsigned char* Ptr, unsigned char* en
                 hlp rnameResult = getDomainSecond(end_hdr, Ptr); // RNAME
                 std::string rname = rnameResult.name;
                 Ptr = rnameResult.ptr;
+                //Ptr =  Ptr + (rdlength-20-mnameResult.size);
 
                 // Читаємо числові значення
                 uint32_t serial = ntohl(*(uint32_t*)Ptr);
@@ -562,10 +523,10 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
         ptr = processDNSAnswer(ansCount,ptr, ptr_Header);
     }
 //    if(authCount != 0){
-//        ptr = processDNSAnswer(ansCount,ptr, ptr_Header);
+//        ptr = processDNSAnswer(authCount,ptr, ptr_Header);
 //    }
 //    if(addCount != 0){
-//        ptr = processDNSAnswer(ansCount,ptr, ptr_Header);
+//        ptr = processDNSAnswer(addCount,ptr, ptr_Header);
 //    }
     if (full_mode) {
         cout << "Timestamp: " << timeString << endl;
