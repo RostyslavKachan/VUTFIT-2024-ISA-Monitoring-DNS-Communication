@@ -4,13 +4,14 @@
 #include <unistd.h>
 #include <string>
 #include <pcap.h>
-#include <netinet/ip.h>   // For IP header
+#include <netinet/ip.h>
 #include <netinet/ip6.h>
-#include <netinet/udp.h>  // For UDP header
-#include <arpa/inet.h>    // For inet_ntoa
-#include <ctime>          // For time formatting
+#include <netinet/udp.h>
+#include <arpa/inet.h>
+#include <ctime>
 #include <fstream>
 #include <set>
+#include <csignal>
 
 
 using namespace std;
@@ -57,7 +58,20 @@ struct hlp{
 
 set<string> uniqueDomains;
 set<string> DomainToIP;
+pcap_t* handle;
+struct bpf_program filter;
 
+void signalHandler(int signum) {
+    uniqueDomains.clear();
+    DomainToIP.clear();
+
+    pcap_freecode(&filter);
+    pcap_close(handle);
+
+
+    cout << "Catch SIGINT, SIGTERM, SIGQUIT" << endl;
+    exit(signum);
+}
 void addDomainToIP(string domainName, string ip){
     domainName.pop_back();
     domainName = domainName + " " + ip;
@@ -70,7 +84,7 @@ void addDomain(std::string domain) {
 void saveDomainsIPToFile(const std::string& filename, bool flag) {
     std::ofstream outFile(filename);
     if (!outFile) {
-        std::cerr << "Не вдалося відкрити файл для запису: " << filename << std::endl;
+        std::cerr << "ERR: Couldnt open file " << filename << std::endl;
         return;
     }
     if(flag) {
@@ -109,9 +123,7 @@ void selectRecordType(uint16_t qtype) {
         case SRV:
             cout << "SRV";
             break;
-        default:
-            cout << "UNKNOWN";
-            return;
+
     }
 }
 
@@ -133,36 +145,29 @@ void selectClass(uint16_t qclass) {
 }
 
 hlp getDomain(unsigned char* Ptr){
-    //unsigned char* my_ptr = Ptr;
+
     hlp a;
     a.size = 0;
-    a.name;
+
     while (*Ptr != 0) {
-
         a.size += *Ptr + 1;
-        // Додаємо розмір мітки плюс байт довжини
         int labelLength = *Ptr;
-
-        //cout << "Label Length: " << labelLength << endl;
         if (labelLength > 63) {
             cerr << "ERR: Invalid label length in NAME" << endl;
             EXIT_FAILURE;
         }
         Ptr++;
         for (int j = 0; j < labelLength; ++j) {
-            //cout << "Adress: " << *Ptr;
-            //cout << "NAME SYMBOLS: " << *Ptr;
             a.name += *Ptr;
             Ptr++;
         }
         a.name += '.';
     }
-    //addDomain(a.name);
-    Ptr++; // Пропускаємо нульовий байт, що позначає кінець QNAME
+
+    Ptr++;
     a.ptr = Ptr;
     a.size+=1;
-   // cout << "Size " << a.size << endl;
-//    cout  << "DOMAIN NAME: " << a.name << " \n";
+
     return a;
 }
 
@@ -185,51 +190,46 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
             throw std::runtime_error("Помилка: можливий некоректний пакет або нескінченний цикл");
         }
 
-        if ((*Ptr & 0xC0) == 0xC0) { // Перевірка на компресію (два старші біти встановлені в 1)
+        if ((*Ptr & 0xC0) == 0xC0) {
             if(a.size == 0){
                 compression_on_start = true;
             }
             additional_struct_to_identif_comp.size = a.size;
             if (!jumped) {
-                a.size += 2; // Додаємо 2 байти для компресованої адреси
+                a.size += 2;
             }
 
-            int offset = ((*Ptr & 0x3F) << 8) | *(Ptr + 1); // Отримуємо зміщення
-            Ptr = startPtr + offset; // Переходимо за вказаним зміщенням
-            jumped = true; // Позначаємо, що було стиснення
+            int offset = ((*Ptr & 0x3F) << 8) | *(Ptr + 1);
+            Ptr = startPtr + offset;
+            jumped = true;
         } else {
-            int labelLength = *Ptr; // Довжина мітки
+            int labelLength = *Ptr;
             if (labelLength > 63) {
                 throw std::runtime_error("ERR: Invalid label length in NAME");
             }
 
-            Ptr++; // Переходимо до символів мітки
-            a.size += labelLength + 1; // Додаємо розмір мітки та байт довжини
+            Ptr++;
+            a.size += labelLength + 1;
 
-            // Додаємо символи мітки до імені
+
             for (int j = 0; j < labelLength; ++j) {
                 a.name += *Ptr;
                 Ptr++;
             }
-            a.name += '.'; // Додаємо крапку після мітки
+            a.name += '.';
         }
     }
-    //addDomain(a.name);
+
     if(compression_on_start){
         a.ptr = originalPtr + 2;
         return a;
     }
     if (!jumped) {
-        Ptr++; // Пропускаємо нульовий байт, якщо не було стрибка
-        a.size += 1; // Додаємо нульовий байт до розміру
+        Ptr++;
+        a.size += 1;
     }
 
-
-    // Зберігаємо вказівник на наступну позицію після доменного імені
-    // Якщо було стиснення, повертаємося до оригінальної позиції + 2 байти (компресійний вказівник)
     a.ptr = jumped ? originalPtr + additional_struct_to_identif_comp.size + 2 : Ptr;
-
-    //std::cout << "Size: " << a.size << std::endl;
     return a;
 }
 
@@ -240,8 +240,8 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
 unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* end_hdr, int section) {
 
     if(section == 1){
-        // Виводимо інформацію про запис
-        cout << "\n[Answers Section]\n";
+
+        cout << "\n[Answer Section]\n";
     }
     else if (section ==2){
         cout << "\n[Authority Section]\n";
@@ -250,224 +250,157 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
         cout << "\n[Additional Section]\n";
     }
     for (int i = 0; i < Count; ++i) {
-        //std::string name;
+
         hlp domain;
-//        // Обробка імені з урахуванням компресії
-//        if ((*ptr & 0xC0) == 0xC0) { // Перевірка на стиснення
-//
-//            uint16_t offset = ((*ptr & 0x3F) << 8) | *(ptr + 1); // Обчислюємо зміщення
-//            unsigned char* compressedPtr = end_hdr + offset; // Переходимо до місця зі стисненим іменем
-//            domain = getDomain(compressedPtr); // Розпаковуємо стиснене ім'я
-//            name = domain.name;
-//            ptr += 2; // Пропускаємо 2 байти компресії
-//        } else {
-//             domain = getDomain(ptr); // Обробляємо звичайне ім'я
-//            if (domain.ptr == nullptr) {
-//                std::cerr << "Error processing domain name in Answer section" << std::endl;
-//                return nullptr;
-//            }
-//            name = domain.name;
-//            ptr = domain.ptr; // Оновлюємо ptr після обробки імені
-//        }
-        domain = getDomainSecond(end_hdr,Ptr);
+
+        domain = getDomainSecond(end_hdr, Ptr);
         Ptr = domain.ptr;
-        // Читаємо TYPE (2 байти)
-        uint16_t type = ntohs(*(uint16_t*)Ptr);
+
+        uint16_t type = ntohs(*(uint16_t *) Ptr);
         Ptr += 2;
 
-        // Читаємо CLASS (2 байти)
-        uint16_t classCode = ntohs(*(uint16_t*)Ptr);
+        uint16_t classCode = ntohs(*(uint16_t *) Ptr);
         Ptr += 2;
 
-        // Читаємо TTL (4 байти)
-        uint32_t ttl = ntohl(*(uint32_t*)Ptr);
+        uint32_t ttl = ntohl(*(uint32_t *) Ptr);
         Ptr += 4;
 
-
-
-        // Читаємо RDLENGTH (2 байти)
-        uint16_t rdlength = ntohs(*(uint16_t*)Ptr);
+        uint16_t rdlength = ntohs(*(uint16_t *) Ptr);
         Ptr += 2;
-        if(type != A && type != NS && type != CNAME && type != SOA && type != MX && type != AAAA && type != SRV){
+        if (type != A && type != NS && type != CNAME && type != SOA && type != MX && type != AAAA && type != SRV) {
             cout << "UNKNOWN type of record" << endl;
-            Ptr+=rdlength;
+            Ptr += rdlength;
             return Ptr;
         }
-        cout << domain.name << " " <<std::dec <<  ttl << " " ;
+        cout << domain.name << " " << std::dec << ttl << " ";
         selectClass(classCode);
         cout << " ";
         selectRecordType(type);
         cout << " ";
         addDomain(domain.name);
-        // Пропускаємо RDATA (rdlength байтів)
 
-//        hlp rdata ;
-//        hlp rdata;
-//        if(type == 1) {
-//            for (int j = 0; j < rdlength; ++j) {
-//                rdata.name += std::to_string(ptr[j]);
-//                if (j < rdlength - 1) {
-//                    rdata.name += ".";
-//                }
-//            }
-//            ptr += rdlength;
-//        }
-            hlp rdata;
-            //cout << "TYPE: " << type << endl;
-            if(type == 1) {
+        hlp rdata;
+        if (type == 1) {
             for (int j = 0; j < rdlength; ++j) {
                 rdata.name += std::to_string(Ptr[j]);
                 if (j < rdlength - 1) {
                     rdata.name += ".";
                 }
             }
-                cout << rdata.name << endl;
-                addDomainToIP(domain.name, rdata.name);
-                Ptr += rdlength;
-            }
-            else if(type == 2){
-                rdata = getDomainSecond(end_hdr,Ptr);
-                //Ptr+=rdlength;
-                cout << rdata.name << endl;
-                addDomain(rdata.name);
-                Ptr = rdata.ptr;
-            }
-            else if(type == 5){// Перевірка на стиснення
+            cout << rdata.name << endl;
+            addDomainToIP(domain.name, rdata.name);
+            Ptr += rdlength;
+        } else if (type == 2) {
+            rdata = getDomainSecond(end_hdr, Ptr);
+            cout << rdata.name << endl;
+            addDomain(rdata.name);
+            Ptr = rdata.ptr;
+        } else if (type == 5) {
+            rdata = getDomainSecond(end_hdr, Ptr);
+            cout << rdata.name << endl;
+            addDomain(rdata.name);
+            Ptr = rdata.ptr;
+        } else if (type == 6) {
+            hlp mnameResult = getDomainSecond(end_hdr, Ptr);
+            Ptr = mnameResult.ptr;
+            cout << mnameResult.name << " " << endl;
+            addDomain(mnameResult.name);
+            hlp rnameResult = getDomainSecond(end_hdr, Ptr);
+            cout << rnameResult.name << " " << endl;
+            addDomain(rnameResult.name);
+            Ptr = rnameResult.ptr;
 
-                rdata = getDomainSecond(end_hdr,Ptr);
-                //Ptr+=rdlength;
-                cout << rdata.name << endl;
-                addDomain(rdata.name);
-                Ptr = rdata.ptr;
-            }
-            else if(type == 6){
-                hlp mnameResult = getDomainSecond(end_hdr, Ptr); // MNAME
 
-                Ptr = mnameResult.ptr;
-                cout << mnameResult.name << " " << endl;
-                addDomain(mnameResult.name);
-                hlp rnameResult = getDomainSecond(end_hdr, Ptr); // RNAME
-                cout << rnameResult.name << " " << endl;
-                addDomain(rnameResult.name);
-                Ptr = rnameResult.ptr;
-                //Ptr =  Ptr + (rdlength-20-mnameResult.size);
+            uint32_t serial = ntohl(*(uint32_t *) Ptr);
+            Ptr += 4;
 
-                // Читаємо числові значення
-                uint32_t serial = ntohl(*(uint32_t*)Ptr);
-                Ptr += 4;
+            uint32_t refresh = ntohl(*(uint32_t *) Ptr);
+            Ptr += 4;
 
-                uint32_t refresh = ntohl(*(uint32_t*)Ptr);
-                Ptr += 4;
+            uint32_t retry = ntohl(*(uint32_t *) Ptr);
+            Ptr += 4;
 
-                uint32_t retry = ntohl(*(uint32_t*)Ptr);
-                Ptr += 4;
+            uint32_t expire = ntohl(*(uint32_t *) Ptr);
+            Ptr += 4;
 
-                uint32_t expire = ntohl(*(uint32_t*)Ptr);
-                Ptr += 4;
+            uint32_t minimum = ntohl(*(uint32_t *) Ptr);
+            Ptr += 4;
+            cout << std::dec << serial << " " << std::dec << refresh << " " << std::dec << retry << " " << std::dec
+                 << expire << " " << std::dec << minimum << endl;
 
-                uint32_t minimum = ntohl(*(uint32_t*)Ptr);
-                Ptr += 4;
-                cout <<std::dec << serial << " " << std::dec << refresh << " " <<std::dec << retry << " " <<std::dec << expire << " " <<std::dec << minimum << endl;
-//                std::cout << "SOA Record: MNAME=" << mname << ", RNAME=" << rname
-//                          << ", Serial=" << serial << ", Refresh=" << refresh
-//                          << ", Retry=" << retry << ", Expire=" << expire
-//                          << ", Minimum TTL=" << minimum << std::endl;
-            }
-            else if(type == 15){
-                uint16_t preference = ntohs(*(uint16_t*)Ptr);
-                Ptr += 2;
+        } else if (type == 15) {
+            uint16_t preference = ntohs(*(uint16_t *) Ptr);
+            Ptr += 2;
 
-                // Викликаємо getDomain для розпаковки Exchange як доменного імені
-                hlp exchangeResult = getDomainSecond(end_hdr, Ptr);
-                cout <<std::dec << preference << " " <<  exchangeResult.name << endl;
-                addDomain(exchangeResult.name);
-                Ptr = exchangeResult.ptr;
-//                //Ptr += rdlength - 2;
-//                std::cout << "MX Record: Preference=" << preference << ", Exchange=" << exchange << std::endl;
 
-            }
-            else if(type == 28){
-                std::string ipv6Address;
+            hlp exchangeResult = getDomainSecond(end_hdr, Ptr);
+            cout << std::dec << preference << " " << exchangeResult.name << endl;
+            addDomain(exchangeResult.name);
+            Ptr = exchangeResult.ptr;
 
-                // Зчитуємо 16 байт IPv6 адреси
-                char buffer[INET6_ADDRSTRLEN];
-                inet_ntop(AF_INET6, Ptr, buffer, INET6_ADDRSTRLEN);
-                ipv6Address = buffer;
 
-                // Пропускаємо RDATA після обробки
-                Ptr += 16;
-                std::cout << ipv6Address << std::endl;
-                addDomainToIP(domain.name, ipv6Address);
-            }
-            else if(type == 33){
-                // Зчитуємо поле Priority (2 байти)
-                uint16_t priority = ntohs(*(uint16_t*)Ptr);
-                Ptr += 2;
+        } else if (type == 28) {
+            std::string ipv6Address;
 
-                // Зчитуємо поле Weight (2 байти)
-                uint16_t weight = ntohs(*(uint16_t*)Ptr);
-                Ptr += 2;
 
-                // Зчитуємо поле Port (2 байти)
-                uint16_t port = ntohs(*(uint16_t*)Ptr);
-                Ptr += 2;
+            char buffer[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET6, Ptr, buffer, INET6_ADDRSTRLEN);
+            ipv6Address = buffer;
 
-                // Викликаємо getDomain для розпаковки Target як доменного імені
-                hlp targetResult = getDomainSecond(end_hdr, Ptr);
-                cout <<std::dec <<  priority << " " << std::dec <<  weight << " " <<std::dec << port << " " << targetResult.name << " " << endl;
-                addDomain(targetResult.name);
-                Ptr = targetResult.ptr ;
-//                std::cout << "SRV Record: Priority=" << priority << ", Weight=" << weight
-//                          << ", Port=" << port << ", Target=" << target << std::endl;
-            }
-//            else{
-//                cout << "UNKNOWN RDATA\n";
-//                Ptr+=rdlength;
-//            }
-            
-        
 
-        
-//        std::cout << "Answer NAME: " << domain.name << " " << ttl << " ";
-//        selectClass(classCode);
-//        std::cout << " ";
-//        selectRecordType(type);
-//        //std::cout << endl;
-//        //std::cout << "\nSize: " << qsize << " байтів" << std::endl;
-//        cout << " RDATA " << rdata.name << endl;
+            Ptr += 16;
+            std::cout << ipv6Address << std::endl;
+            addDomainToIP(domain.name, ipv6Address);
+        } else if (type == 33) {
+
+            uint16_t priority = ntohs(*(uint16_t *) Ptr);
+            Ptr += 2;
+
+            uint16_t weight = ntohs(*(uint16_t *) Ptr);
+            Ptr += 2;
+
+            uint16_t port = ntohs(*(uint16_t *) Ptr);
+            Ptr += 2;
+
+            hlp targetResult = getDomainSecond(end_hdr, Ptr);
+            cout << std::dec << priority << " " << std::dec << weight << " " << std::dec << port << " "
+                 << targetResult.name << " " << endl;
+            addDomain(targetResult.name);
+            Ptr = targetResult.ptr;
+        }
+
     }
-
     return Ptr; 
 }
 
 
 unsigned char* processDNSQuestions(int questionCount, unsigned char* startPtr) {
-    unsigned char* ptr = startPtr; // Початковий вказівник на DNS Questions
+    unsigned char* ptr = startPtr;
 
-    // Обробляємо кожне питання
+
     for (int i = 0; i < questionCount; ++i) {
         hlp domain = getDomain(ptr);
-        //std::string qname = "";z
+
         int qsize = domain.size;
 
-        // Парсимо QNAME
 
-        qsize += 4; // Додаємо 5 байтів для QTYPE і QCLASS
+
+        qsize += 4;
         ptr = domain.ptr;
-        // Парсимо QTYPE і QCLASS
+
         uint16_t qtype = ntohs(*(uint16_t*)ptr);
         ptr += 2;
         uint16_t qclass = ntohs(*(uint16_t*)ptr);
         ptr += 2;
         addDomain(domain.name);
-        // Виводимо інформацію про питання
+
         std::cout << "\n[Question Section]\n";
-        std::cout << "QNAME: " << domain.name << " ";
+        std::cout << domain.name << " ";
         selectClass(qclass);
         std::cout << " ";
         selectRecordType(qtype);
         cout << endl;
-        //std::cout << "\nSize: " << qsize << " байтів" << std::endl;
+
     }
 
     
@@ -552,7 +485,7 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
             if(addCount != 0){
                 ptr = processDNSSections(addCount,ptr, ptr_Header,ADD);
             }
-            cout << "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$44" << endl;
+            cout << "==================== " << endl;
         } else {
             std::cout << timeString << " " << srcIP << " -> " << destIP << " (" << qrType << " " << qCount << "/" << ansCount << "/" << authCount << "/" << addCount << ")" << std::endl;
         }
@@ -627,7 +560,7 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
             if(addCount != 0){
                 ptr = processDNSSections(addCount,ptr, ptr_Header,ADD);
             }
-            cout << "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$44" << endl;
+            cout << "==================== " << endl;
         } else {
             std::cout << timeString << " " << srcIP << " -> " << destIP << " (" << qrType << " " << qCount << "/"
                       << ansCount << "/" << authCount << "/" << addCount << ")" << std::endl;
@@ -637,20 +570,20 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
 
 void captureFromInterface(const std::string& interface) {
     char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_t* handle = pcap_open_live(interface.c_str(), BUFSIZ, 1, 1000, errbuf);
+    handle = pcap_open_live(interface.c_str(), BUFSIZ, 1, 1000, errbuf);
     if (handle == nullptr) {
-        std::cerr << "Could not open device " << interface << ": " << errbuf << std::endl;
+        std::cerr << "ERR: Could not open device " << interface << ": " << errbuf << std::endl;
         return;
     }
 
-    struct bpf_program filter;
+
     if (pcap_compile(handle, &filter, "udp port 53", 0, PCAP_NETMASK_UNKNOWN) == -1) {
-        std::cerr << "Could not parse filter: " << pcap_geterr(handle) << std::endl;
+        std::cerr << "ERR: Could not parse filter: " << pcap_geterr(handle) << std::endl;
         pcap_close(handle);
         return;
     }
     if (pcap_setfilter(handle, &filter) == -1) {
-        std::cerr << "Could not install filter: " << pcap_geterr(handle) << std::endl;
+        std::cerr << "ERR: Could not install filter: " << pcap_geterr(handle) << std::endl;
         pcap_close(handle);
         return;
     }
@@ -663,20 +596,20 @@ void captureFromInterface(const std::string& interface) {
 
 void captureFromFile(const std::string& pcapfile) {
     char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_t* handle = pcap_open_offline(pcapfile.c_str(), errbuf);
+    handle = pcap_open_offline(pcapfile.c_str(), errbuf);
     if (handle == nullptr) {
-        std::cerr << "Could not open file " << pcapfile << ": " << errbuf << std::endl;
+        std::cerr << "ERR: Could not open file " << pcapfile << ": " << errbuf << std::endl;
         return;
     }
 
-    struct bpf_program filter;
+
     if (pcap_compile(handle, &filter, "udp port 53", 0, PCAP_NETMASK_UNKNOWN) == -1) {
-        std::cerr << "Could not parse filter: " << pcap_geterr(handle) << std::endl;
+        std::cerr << "ERR: Could not parse filter: " << pcap_geterr(handle) << std::endl;
         pcap_close(handle);
         return;
     }
     if (pcap_setfilter(handle, &filter) == -1) {
-        std::cerr << "Could not install filter: " << pcap_geterr(handle) << std::endl;
+        std::cerr << "ERR: Could not install filter: " << pcap_geterr(handle) << std::endl;
         pcap_close(handle);
         return;
     }
@@ -690,7 +623,9 @@ void captureFromFile(const std::string& pcapfile) {
 int main(int argc, char* argv[]) {
 
     int opt;
-
+    std::signal(SIGTERM, signalHandler);
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGQUIT, signalHandler);
     bool interface_provided = false;
     bool pcapfile_provided = false;
 
