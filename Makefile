@@ -1,7 +1,7 @@
 # Compiler to be used is g++
 CPP = g++
 # Compiler flags
-CXXFLAGS = -Wall -g
+CXXFLAGS = -Wall -Wextra -g
 # Target executable name
 TARGET = dns-monitor
 # Source files that make up the project

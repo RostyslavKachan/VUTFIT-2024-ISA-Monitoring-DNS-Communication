@@ -60,27 +60,9 @@ set<string> uniqueDomains;
 set<string> DomainToIP;
 pcap_t* handle;
 struct bpf_program filter;
+string domainsfile;
+string translationsfile;
 
-void signalHandler(int signum) {
-    uniqueDomains.clear();
-    DomainToIP.clear();
-
-    pcap_freecode(&filter);
-    pcap_close(handle);
-
-
-    cout << "Catch SIGINT, SIGTERM, SIGQUIT" << endl;
-    exit(signum);
-}
-void addDomainToIP(string domainName, string ip){
-    domainName.pop_back();
-    domainName = domainName + " " + ip;
-    DomainToIP.insert(domainName);
-}
-void addDomain(std::string domain) {
-    domain.pop_back();
-    uniqueDomains.insert(domain);
-}
 void saveDomainsIPToFile(const std::string& filename, bool flag) {
     std::ofstream outFile(filename);
     if (!outFile) {
@@ -100,6 +82,34 @@ void saveDomainsIPToFile(const std::string& filename, bool flag) {
     outFile.close();
 
 }
+
+void signalHandler(int signum) {
+    if(!domainsfile.empty()){
+        saveDomainsIPToFile(domainsfile,true);
+    }
+    if(!translationsfile.empty()){
+        saveDomainsIPToFile(translationsfile,false);
+    }
+    uniqueDomains.clear();
+    DomainToIP.clear();
+
+    pcap_freecode(&filter);
+    pcap_close(handle);
+
+
+    cout << "Catch SIGINT, SIGTERM, SIGQUIT" << endl;
+    exit(signum);
+}
+void addDomainToIP(string domainName, string ip){
+    domainName.pop_back();
+    domainName = domainName + " " + ip;
+    DomainToIP.insert(domainName);
+}
+void addDomain(std::string domain) {
+    domain.pop_back();
+    uniqueDomains.insert(domain);
+}
+
 void selectRecordType(uint16_t qtype) {
     switch (qtype) {
         case A:
@@ -186,12 +196,12 @@ hlp getDomainNotQuestionSection(unsigned char* startPtr, unsigned char* Ptr) {
 
 
     while (*Ptr != 0) {
-        if ((*Ptr & 0xC0) == 0xC0) {  // Виявлена компресія
+        if ((*Ptr & 0xC0) == 0xC0) {
             if (a.size == 0) {
-                // Випадок 1: Компресія на самому початку
+
                 compression_on_start = true;
             } else if (!jumped) {
-                // Випадок 2: Компресія всередині домену
+
                 additional_struct_to_identif_comp.size = a.size;
             }
 
@@ -216,13 +226,13 @@ hlp getDomainNotQuestionSection(unsigned char* startPtr, unsigned char* Ptr) {
     }
 
     if (compression_on_start) {
-        // Випадок 1: Компресія на самому початку
+
         a.ptr = originalPtr + 2;
     } else if (jumped) {
-        // Випадок 2: Компресія всередині домену
+
         a.ptr = originalPtr + additional_struct_to_identif_comp.size + 2;
     } else {
-        // Випадок 3: Компресія відсутня
+
         Ptr++;
         a.size += 1;
         a.ptr = Ptr;
@@ -638,8 +648,7 @@ int main(int argc, char* argv[]) {
 
     string interface;
     string pcapfile;
-    string domainsfile;
-    string translationsfile;
+
 
     while ((opt = getopt(argc, argv, "i:p:vd:t:")) != -1) {
         switch (opt) {
