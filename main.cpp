@@ -171,32 +171,28 @@ hlp getDomain(unsigned char* Ptr){
     return a;
 }
 
-
-hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
+hlp getDomainNotQuestionSection(unsigned char* startPtr, unsigned char* Ptr) {
     hlp a;
     a.size = 0;
     a.name = "";
 
     hlp additional_struct_to_identif_comp;
-    additional_struct_to_identif_comp.size  = 0;
-    additional_struct_to_identif_comp.name  = "";
+    additional_struct_to_identif_comp.size = 0;
+    additional_struct_to_identif_comp.name = "";
+
     unsigned char* originalPtr = Ptr;
     bool jumped = false;
     bool compression_on_start = false;
-    int safetyCounter = 0;
+
 
     while (*Ptr != 0) {
-        if (safetyCounter++ > 100) {
-            throw std::runtime_error("Помилка: можливий некоректний пакет або нескінченний цикл");
-        }
-
-        if ((*Ptr & 0xC0) == 0xC0) {
-            if(a.size == 0){
+        if ((*Ptr & 0xC0) == 0xC0) {  // Виявлена компресія
+            if (a.size == 0) {
+                // Випадок 1: Компресія на самому початку
                 compression_on_start = true;
-            }
-            additional_struct_to_identif_comp.size = a.size;
-            if (!jumped) {
-                a.size += 2;
+            } else if (!jumped) {
+                // Випадок 2: Компресія всередині домену
+                additional_struct_to_identif_comp.size = a.size;
             }
 
             int offset = ((*Ptr & 0x3F) << 8) | *(Ptr + 1);
@@ -211,7 +207,6 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
             Ptr++;
             a.size += labelLength + 1;
 
-
             for (int j = 0; j < labelLength; ++j) {
                 a.name += *Ptr;
                 Ptr++;
@@ -220,18 +215,24 @@ hlp getDomainSecond(unsigned char* startPtr, unsigned char* Ptr) {
         }
     }
 
-    if(compression_on_start){
+    if (compression_on_start) {
+        // Випадок 1: Компресія на самому початку
         a.ptr = originalPtr + 2;
-        return a;
-    }
-    if (!jumped) {
+    } else if (jumped) {
+        // Випадок 2: Компресія всередині домену
+        a.ptr = originalPtr + additional_struct_to_identif_comp.size + 2;
+    } else {
+        // Випадок 3: Компресія відсутня
         Ptr++;
         a.size += 1;
+        a.ptr = Ptr;
     }
 
-    a.ptr = jumped ? originalPtr + additional_struct_to_identif_comp.size + 2 : Ptr;
     return a;
 }
+
+
+
 
 
 
@@ -253,7 +254,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
 
         hlp domain;
 
-        domain = getDomainSecond(end_hdr, Ptr);
+        domain = getDomainNotQuestionSection(end_hdr, Ptr);
         Ptr = domain.ptr;
 
         uint16_t type = ntohs(*(uint16_t *) Ptr);
@@ -270,7 +271,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
         if (type != A && type != NS && type != CNAME && type != SOA && type != MX && type != AAAA && type != SRV) {
             cout << "UNKNOWN type of record" << endl;
             Ptr += rdlength;
-            return Ptr;
+            continue;
         }
         cout << domain.name << " " << std::dec << ttl << " ";
         selectClass(classCode);
@@ -291,23 +292,24 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
             addDomainToIP(domain.name, rdata.name);
             Ptr += rdlength;
         } else if (type == 2) {
-            rdata = getDomainSecond(end_hdr, Ptr);
+            rdata = getDomainNotQuestionSection(end_hdr, Ptr);
             cout << rdata.name << endl;
             addDomain(rdata.name);
             Ptr = rdata.ptr;
         } else if (type == 5) {
-            rdata = getDomainSecond(end_hdr, Ptr);
+            rdata = getDomainNotQuestionSection(end_hdr, Ptr);
             cout << rdata.name << endl;
             addDomain(rdata.name);
             Ptr = rdata.ptr;
         } else if (type == 6) {
-            hlp mnameResult = getDomainSecond(end_hdr, Ptr);
+            hlp mnameResult = getDomainNotQuestionSection(end_hdr, Ptr);
             Ptr = mnameResult.ptr;
-            cout << mnameResult.name << " " << endl;
+
+            cout << mnameResult.name << " ";
             addDomain(mnameResult.name);
-            hlp rnameResult = getDomainSecond(end_hdr, Ptr);
-            cout << rnameResult.name << " " << endl;
-            addDomain(rnameResult.name);
+            hlp rnameResult = getDomainNotQuestionSection(end_hdr, Ptr);
+            cout << rnameResult.name << " ";
+
             Ptr = rnameResult.ptr;
 
 
@@ -333,7 +335,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
             Ptr += 2;
 
 
-            hlp exchangeResult = getDomainSecond(end_hdr, Ptr);
+            hlp exchangeResult = getDomainNotQuestionSection(end_hdr, Ptr);
             cout << std::dec << preference << " " << exchangeResult.name << endl;
             addDomain(exchangeResult.name);
             Ptr = exchangeResult.ptr;
@@ -362,7 +364,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
             uint16_t port = ntohs(*(uint16_t *) Ptr);
             Ptr += 2;
 
-            hlp targetResult = getDomainSecond(end_hdr, Ptr);
+            hlp targetResult = getDomainNotQuestionSection(end_hdr, Ptr);
             cout << std::dec << priority << " " << std::dec << weight << " " << std::dec << port << " "
                  << targetResult.name << " " << endl;
             addDomain(targetResult.name);
@@ -392,9 +394,14 @@ unsigned char* processDNSQuestions(int questionCount, unsigned char* startPtr) {
         ptr += 2;
         uint16_t qclass = ntohs(*(uint16_t*)ptr);
         ptr += 2;
+        std::cout << "\n[Question Section]\n";
+        if (qtype != A && qtype != NS && qtype != CNAME && qtype != SOA && qtype != MX && qtype != AAAA && qtype != SRV) {
+            cout << "UNKNOWN type of record" << endl;
+            continue;
+        }
         addDomain(domain.name);
 
-        std::cout << "\n[Question Section]\n";
+
         std::cout << domain.name << " ";
         selectClass(qclass);
         std::cout << " ";
@@ -460,7 +467,7 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
             cout << "DstIP: " << destIP << endl;
             cout << "SrcPort: UDP/" << std::dec << srcPort << endl;
             cout << "DstPort: UDP/" << std::dec << dstPort << endl;
-            cout << "Identifier: 0x" << std::hex << ID << endl;
+            cout << "Identifier: 0x" << std::hex << std::uppercase<< ID << endl;
             std::cout << "Flags: QR=" << int(isResponse)
                       << ", OPCODE=" << opcode
                       << ", AA=" << aa
@@ -535,7 +542,7 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
             cout << "DstIP: " << destIP << endl;
             cout << "SrcPort: UDP/"  << std::dec << srcPort << endl;
             cout << "DstPort: UDP/" << std::dec << dstPort << endl;
-            cout << "Identifier: 0x" << std::hex << ID << endl;
+            cout << "Identifier: 0x" << std::hex << std::uppercase << ID << endl;
             std::cout << "Flags: QR=" << int(isResponse)
                       << ", OPCODE=" << opcode
                       << ", AA=" << aa
@@ -626,8 +633,8 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, signalHandler);
     std::signal(SIGINT, signalHandler);
     std::signal(SIGQUIT, signalHandler);
-    bool interface_provided = false;
-    bool pcapfile_provided = false;
+    bool interfaceProvided = false;
+    bool pcapfileProvided = false;
 
     string interface;
     string pcapfile;
@@ -637,7 +644,7 @@ int main(int argc, char* argv[]) {
     while ((opt = getopt(argc, argv, "i:p:vd:t:")) != -1) {
         switch (opt) {
             case 'i':
-                if (interface_provided) {
+                if (interfaceProvided) {
                     cerr << "ERR: Option -i specified more than once.\n";
                     return EXIT_FAILURE;
                 }
@@ -646,10 +653,10 @@ int main(int argc, char* argv[]) {
                     return EXIT_FAILURE;
                 }
                 interface = optarg;
-                interface_provided = true;
+                interfaceProvided = true;
                 break;
             case 'p':
-                if (pcapfile_provided) {
+                if (pcapfileProvided) {
                     cerr << "ERR: Option -p specified more than once.\n";
                     return EXIT_FAILURE;
                 }
@@ -658,7 +665,7 @@ int main(int argc, char* argv[]) {
                     return EXIT_FAILURE;
                 }
                 pcapfile = optarg;
-                pcapfile_provided = true;
+                pcapfileProvided = true;
                 break;
             case 'v':
                 full_mode = true;
@@ -689,11 +696,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (!interface_provided && !pcapfile_provided) {
+    if (!interfaceProvided && !pcapfileProvided) {
         cerr << "ERR: Interface or pcapfile were not specified!\tUsage: ./dns-monitor (-i <interface> | -p <pcapfile>)\n";
         return EXIT_FAILURE;
     }
-    if (interface_provided && pcapfile_provided) {
+    if (interfaceProvided && pcapfileProvided) {
         cerr << "ERR: You cant use this 2 options! You have to choose only one)\tUsage: ./dns-monitor (-i <interface> | -p <pcapfile>)\n";
         return EXIT_FAILURE;
     }
