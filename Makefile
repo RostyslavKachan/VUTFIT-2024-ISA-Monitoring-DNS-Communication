@@ -1,24 +1,31 @@
 # Compiler to be used is g++
-CPP = g++
+CC = g++
 # Compiler flags
-CXXFLAGS = -Wall -Wextra -g
-# Target executable name
+CFLAGS = -Wall -Wextra -g
+# Libraries
+LIBS = -lpcap
+# Command to remove files
+RM = rm -f
+
+# Target executable
 TARGET = dns-monitor
-# Source files that make up the project
+# Source and object files
 SRCS = main.cpp
-# Object files, які генеруються з source files
 OBJS = $(SRCS:.cpp=.o)
-# pcap library
-LDFLAGS = -lpcap
 
-#making executable file
+# Default target, builds the executable
+.PHONY: all clean
+
+all: $(TARGET)
+
+# Linking step: creates the final executable
 $(TARGET): $(OBJS)
-	$(CPP) $(CXXFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LIBS)
 
-#making object files
-%.o: %.cpp
-	$(CPP) $(CXXFLAGS) -c $<
+# Compiling object file
+$(OBJS): $(SRCS)
+	$(CC) $(CFLAGS) -c $(SRCS)
 
-#delete object files and target
+# Clean up build artifacts
 clean:
-	rm -f $(OBJS) $(TARGET)
+	$(RM) $(OBJS) $(TARGET)

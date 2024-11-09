@@ -154,37 +154,11 @@ void selectClass(uint16_t qclass) {
     }
 }
 
-hlp getDomain(unsigned char* Ptr){
 
-    hlp a;
-    a.size = 0;
-
-    while (*Ptr != 0) {
-        a.size += *Ptr + 1;
-        int labelLength = *Ptr;
-        if (labelLength > 63) {
-            cerr << "ERR: Invalid label length in NAME" << endl;
-            EXIT_FAILURE;
-        }
-        Ptr++;
-        for (int j = 0; j < labelLength; ++j) {
-            a.name += *Ptr;
-            Ptr++;
-        }
-        a.name += '.';
-    }
-
-    Ptr++;
-    a.ptr = Ptr;
-    a.size+=1;
-
-    return a;
-}
-
-hlp getDomainNotQuestionSection(unsigned char* startPtr, unsigned char* Ptr) {
-    hlp a;
-    a.size = 0;
-    a.name = "";
+hlp getDomain(unsigned char* startPtr, unsigned char* Ptr) {
+    hlp domain;
+    domain.size = 0;
+    domain.name = "";
 
     hlp additional_struct_to_identif_comp;
     additional_struct_to_identif_comp.size = 0;
@@ -197,12 +171,12 @@ hlp getDomainNotQuestionSection(unsigned char* startPtr, unsigned char* Ptr) {
 
     while (*Ptr != 0) {
         if ((*Ptr & 0xC0) == 0xC0) {
-            if (a.size == 0) {
+            if (domain.size == 0) {
 
                 compression_on_start = true;
             } else if (!jumped) {
 
-                additional_struct_to_identif_comp.size = a.size;
+                additional_struct_to_identif_comp.size = domain.size;
             }
 
             int offset = ((*Ptr & 0x3F) << 8) | *(Ptr + 1);
@@ -215,30 +189,30 @@ hlp getDomainNotQuestionSection(unsigned char* startPtr, unsigned char* Ptr) {
             }
 
             Ptr++;
-            a.size += labelLength + 1;
+            domain.size += labelLength + 1;
 
             for (int j = 0; j < labelLength; ++j) {
-                a.name += *Ptr;
+                domain.name += *Ptr;
                 Ptr++;
             }
-            a.name += '.';
+            domain.name += '.';
         }
     }
 
     if (compression_on_start) {
 
-        a.ptr = originalPtr + 2;
+        domain.ptr = originalPtr + 2;
     } else if (jumped) {
 
-        a.ptr = originalPtr + additional_struct_to_identif_comp.size + 2;
+        domain.ptr = originalPtr + additional_struct_to_identif_comp.size + 2;
     } else {
 
         Ptr++;
-        a.size += 1;
-        a.ptr = Ptr;
+        domain.size += 1;
+        domain.ptr = Ptr;
     }
 
-    return a;
+    return domain;
 }
 
 
@@ -264,7 +238,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
 
         hlp domain;
 
-        domain = getDomainNotQuestionSection(end_hdr, Ptr);
+        domain = getDomain(end_hdr, Ptr);
         Ptr = domain.ptr;
 
         uint16_t type = ntohs(*(uint16_t *) Ptr);
@@ -302,22 +276,22 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
             addDomainToIP(domain.name, rdata.name);
             Ptr += rdlength;
         } else if (type == 2) {
-            rdata = getDomainNotQuestionSection(end_hdr, Ptr);
+            rdata = getDomain(end_hdr, Ptr);
             cout << rdata.name << endl;
             addDomain(rdata.name);
             Ptr = rdata.ptr;
         } else if (type == 5) {
-            rdata = getDomainNotQuestionSection(end_hdr, Ptr);
+            rdata = getDomain(end_hdr, Ptr);
             cout << rdata.name << endl;
             addDomain(rdata.name);
             Ptr = rdata.ptr;
         } else if (type == 6) {
-            hlp mnameResult = getDomainNotQuestionSection(end_hdr, Ptr);
+            hlp mnameResult = getDomain(end_hdr, Ptr);
             Ptr = mnameResult.ptr;
 
             cout << mnameResult.name << " ";
             addDomain(mnameResult.name);
-            hlp rnameResult = getDomainNotQuestionSection(end_hdr, Ptr);
+            hlp rnameResult = getDomain(end_hdr, Ptr);
             cout << rnameResult.name << " ";
 
             Ptr = rnameResult.ptr;
@@ -345,7 +319,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
             Ptr += 2;
 
 
-            hlp exchangeResult = getDomainNotQuestionSection(end_hdr, Ptr);
+            hlp exchangeResult = getDomain(end_hdr, Ptr);
             cout << std::dec << preference << " " << exchangeResult.name << endl;
             addDomain(exchangeResult.name);
             Ptr = exchangeResult.ptr;
@@ -374,7 +348,7 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
             uint16_t port = ntohs(*(uint16_t *) Ptr);
             Ptr += 2;
 
-            hlp targetResult = getDomainNotQuestionSection(end_hdr, Ptr);
+            hlp targetResult = getDomain(end_hdr, Ptr);
             cout << std::dec << priority << " " << std::dec << weight << " " << std::dec << port << " "
                  << targetResult.name << " " << endl;
             addDomain(targetResult.name);
@@ -382,21 +356,18 @@ unsigned char* processDNSSections(int Count, unsigned char* Ptr, unsigned char* 
         }
 
     }
-    return Ptr; 
+    return Ptr;
 }
 
 
-unsigned char* processDNSQuestions(int questionCount, unsigned char* startPtr) {
-    unsigned char* ptr = startPtr;
+unsigned char* processDNSQuestions(int questionCount, unsigned char* lastPtr, unsigned char* end_hdr) {
+    unsigned char* ptr = lastPtr;
 
 
     for (int i = 0; i < questionCount; ++i) {
-        hlp domain = getDomain(ptr);
+        hlp domain = getDomain(end_hdr, ptr);
 
         int qsize = domain.size;
-
-
-
         qsize += 4;
         ptr = domain.ptr;
 
@@ -419,8 +390,6 @@ unsigned char* processDNSQuestions(int questionCount, unsigned char* startPtr) {
         cout << endl;
 
     }
-
-    
     return ptr;
 }
 
@@ -490,8 +459,7 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
                       << std::endl;
             if (qCount != 0) {
 
-                ptr = processDNSQuestions(qCount,ptr_end_hdr);
-            }
+                ptr = processDNSQuestions(qCount,ptr,ptr_Header);            }
 
             if (ansCount != 0) {
                 ptr = processDNSSections(ansCount,ptr, ptr_Header, ANS);
@@ -565,17 +533,17 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
                       << std::endl;
             if (qCount != 0) {
 
-                ptr = processDNSQuestions(qCount,ptr_end_hdr);
+                ptr = processDNSQuestions(qCount,ptr,ptr_Header);
             }
 
             if (ansCount != 0) {
                 ptr = processDNSSections(ansCount,ptr, ptr_Header, ANS);
             }
             if(authCount != 0){
-                ptr = processDNSSections(authCount,ptr, ptr_Header, AUTH);
+                ptr = processDNSSections(authCount, ptr, ptr_Header, AUTH);
             }
             if(addCount != 0){
-                ptr = processDNSSections(addCount,ptr, ptr_Header,ADD);
+                ptr = processDNSSections(addCount, ptr, ptr_Header,ADD);
             }
             cout << "==================== " << endl;
         } else {
