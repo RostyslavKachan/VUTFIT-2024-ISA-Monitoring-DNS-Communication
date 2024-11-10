@@ -1,3 +1,5 @@
+#Kachan Rostyslav xkacha02
+#ISA 2024
 # Compiler to be used is g++
 CC = g++
 # Compiler flags
@@ -10,7 +12,7 @@ RM = rm -f
 # Target executable
 TARGET = dns-monitor
 # Source and object files
-SRCS = main.cpp
+SRCS = main.cpp PacketHandler.cpp ProcessDNSSections.cpp SaveFile.cpp SetupFilter.cpp SignalHandler.cpp getDomain.cpp
 OBJS = $(SRCS:.cpp=.o)
 
 # Default target, builds the executable
