@@ -96,7 +96,6 @@ int main(int argc, char* argv[]) {
             default:
                 cout << "Usage: ./dns-monitor (-i <interface> | -p <pcapfile>)\n";
                 cout << "Optional:\n";
-                cout << "-v Full information about dns packet\n";
                 cout << "-v - verbose mode: complete listing of DNS message details;\n";
                 cout << "-d <domainsfile> - the name of the domain name file\n";
                 cout << "-t <translationsfile> - the name of the domain name to IP translation file\n";

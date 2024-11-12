@@ -10,7 +10,7 @@ hlp getDomain(unsigned char* startPtr, unsigned char* Ptr) {
     hlp domain;
     domain.size = 0;
     domain.name = "";
-
+    int checkNotEmpty = 0;
     hlp additional_struct_to_identif_comp;
     additional_struct_to_identif_comp.size = 0;
     additional_struct_to_identif_comp.name = "";
@@ -48,9 +48,14 @@ hlp getDomain(unsigned char* startPtr, unsigned char* Ptr) {
             }
             domain.name += '.';
         }
+        checkNotEmpty++;
     }
-
-    if (compression_on_start) {
+    if(checkNotEmpty == 0){
+        Ptr++;
+        domain.ptr = Ptr;
+        domain.name+= '.';
+    }
+    else if (compression_on_start) {
 
         domain.ptr = originalPtr + 2;
     } else if (jumped) {
