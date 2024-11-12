@@ -4,6 +4,7 @@
 #ifndef ISA_PROCESSDNSSECTIONS_H
 #define ISA_PROCESSDNSSECTIONS_H
 #include "SignalHandler.h"
+#include "PacketHandler.h"
 #include "getDomain.h"
 void selectRecordType(uint16_t type);
 void selectClass(uint16_t Class);

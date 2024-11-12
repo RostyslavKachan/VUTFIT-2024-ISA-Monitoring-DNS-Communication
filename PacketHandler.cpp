@@ -85,7 +85,22 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
             cout << "==================== " << endl;
         } else {
             std::cout << timeString << " " << srcIP << " -> " << destIP << " (" << qrType << " " << qCount << "/" << ansCount << "/" << authCount << "/" << addCount << ")" << std::endl;
-        }
+            if(!domainsfile.empty() || !translationsfile.empty())
+            {
+                if (qCount != 0) {
+
+                    ptr = processDNSQuestions(qCount,ptr,ptr_Header);            }
+
+                if (ansCount != 0) {
+                    ptr = processDNSSections(ansCount,ptr, ptr_Header, ANS);
+                }
+                if(authCount != 0){
+                    ptr = processDNSSections(authCount,ptr, ptr_Header, AUTH);
+                }
+                if(addCount != 0){
+                    ptr = processDNSSections(addCount,ptr, ptr_Header,ADD);
+                }
+        }   }
     }
     else if(ipVersion == 6) {
 
@@ -161,6 +176,23 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
         } else {
             std::cout << timeString << " " << srcIP << " -> " << destIP << " (" << qrType << " " << qCount << "/"
                       << ansCount << "/" << authCount << "/" << addCount << ")" << std::endl;
+
+            if(!domainsfile.empty() || !translationsfile.empty())
+            {
+                if (qCount != 0) {
+
+                    ptr = processDNSQuestions(qCount,ptr,ptr_Header);            }
+
+                if (ansCount != 0) {
+                    ptr = processDNSSections(ansCount,ptr, ptr_Header, ANS);
+                }
+                if(authCount != 0){
+                    ptr = processDNSSections(authCount,ptr, ptr_Header, AUTH);
+                }
+                if(addCount != 0){
+                    ptr = processDNSSections(addCount,ptr, ptr_Header,ADD);
+                }
+            }
         }
     }
 }
